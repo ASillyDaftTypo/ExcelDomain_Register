@@ -1,0 +1,611 @@
+Public Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+  
+  Function show(cmdstr) 'function displays the contents of a string - used for debugging purposes
+
+  Dim strTestString As String
+    strTestString = cmdstr
+    Trim (strTestString)
+    strTestString = Replace(strTestString, vbTab, "")
+  
+    Dim strTestFile As String
+   strTestFile = "C:\TEMP\TESTFILE.TXT"    'make sure you have C:\TEMP folder
+
+	'Write to file
+    Call WriteStringToFile(strTestFile, strTestString)
+
+	'View file
+   Call SendFileToNotePad(strTestFile)
+   
+   End Function
+
+Sub WriteStringToFile(pFileName As String, pString As String) 'subroutine of show()
+
+    Dim intFileNum As Integer
+    
+    intFileNum = FreeFile
+    Open pFileName For Output As intFileNum 'change Output to Append if you want to add to an existing file
+    Print #intFileNum, pString
+    Close intFileNum
+
+End Sub
+
+Sub SendFileToNotePad(pFileName As String) 'subroutine of show()
+    Dim lngReturn As Long
+
+    lngReturn = Shell("NOTEPAD.EXE " & pFileName, vbNormalFocus)
+
+End Sub
+
+Public Function NSLookup(lookupVal As String, Optional addressOpt As Integer) As String
+
+If Sheets("Customer Domains").OLEObjects("CheckBox1").Object.Value = True Then GoTo START
+If Sheets("Customer Domains").OLEObjects("CheckBox2").Object.Value = True Then GoTo START
+If Sheets("Customer Domains").OLEObjects("CheckBox3").Object.Value = True Then GoTo START
+
+Exit Function 'checks if update allowed for each case, else exits
+
+START:
+
+If lookupVal = "" Then
+NSLookup = ""
+Exit Function
+End If 'if field blank, exit
+
+Dim i As Integer
+i = 0
+
+   Const AUTO_DETECT = 0
+   Const DNS_LOOKUP = 1
+   Const ADDRESS_LOOKUP = 2
+   Const MAIL_LOOKUP = 3
+   
+   'Skip everything if the field is blank
+   If lookupVal <> "" Then
+        Dim oFSO As Object, oShell As Object, oTempFile As Object
+        Dim sLine As String, sFilename As String
+        Dim intFound As Integer
+        Set oFSO = CreateObject("Scripting.FileSystemObject")
+        Set oShell = CreateObject("Wscript.Shell")
+   
+        'RegEx used to check for IP address string
+        'Detect what is being tested
+        If addressOpt = AUTO_DETECT Then
+            ipLookup = FindIP(lookupVal)
+            If ipLookup = "" Then
+                addressOpt = ADDRESS_LOOKUP
+            Else
+                addressOpt = NAME_LOOKUP
+                lookupVal = ipLookup
+            End If
+        ElseIf addressOpt = NAME_LOOKUP Then
+            lookupVal = FindIP(lookupVal)
+        End If
+REDO:
+       i = i + 1
+        'start of nslookup loop
+        sFilename = oFSO.GetTempName
+        oShell.Run "cmd /c nslookup -querytype=all " & lookupVal & " > " & sFilename, 0, True
+        Set oTempFile = oFSO.OpenTextFile(sFilename, 1)
+        Do While oTempFile.AtEndOfStream <> True
+            sLine = oTempFile.Readline
+            cmdstr = cmdstr & Trim(sLine) & vbCrLf
+        Loop
+        oTempFile.Close
+        oFSO.DeleteFile (sFilename)
+        
+        'Process the result
+        intFound = InStr(1, cmdstr, "internet address", vbTextCompare)
+        
+       If intFound = 0 Then 'checks if result
+             If i < 5 Then
+             Sleep (1000) 'wait 1 second
+             'show (cmdstr)
+             cmdstr = ""
+              GoTo REDO 'resets loop
+              End If
+              If i = 5 Then
+             NSLookup = "NotFound"
+            Exit Function 'after several attempts, address unreachable
+            End If
+            
+        ElseIf intFound > 0 Then
+            
+            If addressOpt = DNS_LOOKUP Then
+            
+            intFound = InStr(1, cmdstr, "nameserver", vbTextCompare)
+            
+            If intFound = 0 Then
+             If i < 5 Then
+             Sleep (1000)
+             'show (cmdstr)
+             cmdstr = ""
+              GoTo REDO
+              End If
+              If i = 5 Then
+             NSLookup = "NotFound"
+            Exit Function
+            End If
+            End If
+                        
+                loc1 = InStr(intFound, cmdstr, "nameserver", vbTextCompare) + InStr(intFound, cmdstr, lookupVal & "nameserver", vbTextCompare)
+                loc2 = InStr(loc1, cmdstr, vbCrLf, vbTextCompare)
+                namestr = Trim(Mid(cmdstr, loc1 + 13, loc2 - loc1 - 11))
+                namestr = Replace(namestr, Chr(13), "")
+                namestr = Replace(namestr, vbCr, "")
+                namestr = Replace(namestr, vbLf, "")
+                StripControlChars (namestr)
+                lookupVal = namestr
+                addressOpt = 2
+                cmdstr = ""
+                GoTo REDO 'uses the DNS name to search for DNS address
+                
+            ElseIf addressOpt = ADDRESS_LOOKUP Then
+            
+                loc1 = InStr(intFound, cmdstr, "internet address", vbTextCompare) + InStr(intFound, cmdstr, lookupVal & "internet address", vbTextCompare)
+                loc2 = InStr(loc1, cmdstr, vbCrLf, vbTextCompare)
+                namestr = Trim(Mid(cmdstr, loc1 + 19, loc2 - loc1 - 19))
+                
+            ElseIf addressOpt = MAIL_LOOKUP Then
+            
+            intFound = InStr(1, cmdstr, "mail exchanger", vbTextCompare)
+            
+            If intFound = 0 Then
+            If i < 5 Then
+              GoTo REDO
+              End If
+              If i = 5 Then
+             NSLookup = "NotFound"
+            Exit Function
+            End If
+            End If
+                            
+                loc1 = InStr(intFound, cmdstr, "mail exchanger", vbTextCompare) '+ InStr(intFound, cmdstr, "mail addr", vbTextCompare)
+                loc2 = InStr(loc1, cmdstr, vbCrLf, vbTextCompare)
+                namestr = Trim(Mid(cmdstr, loc1 + 17, loc2 - loc1 - 17))
+                namestr = Replace(namestr, Chr(13), "")
+                namestr = Replace(namestr, vbCr, "")
+                namestr = Replace(namestr, vbLf, "")
+                StripControlChars (namestr)
+                lookupVal = namestr
+                addressOpt = 2
+                cmdstr = ""
+                GoTo REDO
+            
+            
+            '    loc1 = InStr(intFound, cmdStr, "Name:", vbTextCompare)
+             '   loc2 = InStr(loc1, cmdStr, vbCrLf, vbTextCompare)
+              '  namestr = Trim(Mid(cmdStr, loc1 + 5, loc2 - loc1 - 5))
+            End If
+        End If
+        NSLookup = namestr
+    Else
+        NSLookup = "N/A"
+    End If
+End Function
+
+Function StripControlChars(Source As String, Optional KeepCRLF As Boolean = True) As String
+    Dim index As Long
+    Dim bytes() As Byte
+    
+    ' the fastest way to process this string
+    ' is copy it into an array of Bytes
+    bytes() = Source
+    For index = 0 To UBound(bytes) Step 2
+        ' if this is a control character
+        If bytes(index) < 32 And bytes(index + 1) = 0 Then
+            If Not KeepCRLF Or (bytes(index) <> 13 And bytes(index) <> 10) Then
+                ' the user asked to trim CRLF or this
+                ' character isn't a CR or a LF, so clear it
+                bytes(index) = 0
+            End If
+        End If
+    Next
+    
+    ' return this string, after filtering out all null chars
+    StripControlChars = Replace(bytes(), vbNullChar, "")
+            
+End Function
+
+
+Function FindIP(strTest As String) As String
+    Dim regEx As Object
+    Dim valid As Boolean
+    Dim Matches As Object
+    Dim i As Integer
+    Set regEx = CreateObject("VBScript.RegExp")
+    
+    regEx.Pattern = "\b(?:\d{1,3}\.){3}\d{1,3}\b"
+    valid = regEx.Test(strTest)
+    If valid Then
+        Set Matches = regEx.Execute(strTest)
+        FindIP = Matches(0)
+    Else
+        FindIP = ""
+    End If
+End Function
+
+Public Function Octet(inIp As String, tetNo As Integer) As Byte
+
+If Sheets("IP Referencing").OLEObjects("CheckBox1").Object.Value = False Then Exit Function
+'splits IP Address into octets into corresponding cells
+'recombined into IP Number using ((N1)*256^3)+((N2)*256^2)+((N3)*256)+N4
+'this must be done so IP can be evaluated between ranges
+Dim regEx As New VBScript_RegExp_55.RegExp
+
+regEx.Pattern = "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}"
+regEx.IgnoreCase = True
+regEx.Global = True
+
+ Ip = Trim(inIp)
+ If regEx.Test(Ip) Then
+ 
+    Dim a() As String
+    a = Split(inIp, ".")
+    Octet = CByte(a(tetNo - 1))
+    Exit Function
+        
+    Else: Octet = 0
+    End If
+End Function
+
+Function HostEvaluate(ipnumber)
+If Sheets("IP Referencing").OLEObjects("CheckBox1").Object.Value = True Then GoTo START
+Exit Function 'if disabled, exit
+
+START:
+ Dim j As Integer
+
+ Dim low As String
+ Dim high As String
+ Dim Provider As String
+ Dim Host As String
+  
+ j = 3
+ Host = ""
+ 
+ If IsNumeric(ipnumber) = False Then GoTo FINISH
+    
+SORT:
+
+Do While IsEmpty(Worksheets("IP Referencing").Cells(j, 5).Value) = False
+'cycles through list of providers to find IP owner
+  Provider = Worksheets("IP Referencing").Cells(j, 5).Value
+  low = Worksheets("IP Referencing").Cells(j, 12).Value
+  high = Worksheets("IP Referencing").Cells(j, 17).Value
+
+   If IsNumeric(low) And IsNumeric(high) = True Then
+    If low <= ipnumber And ipnumber <= high Then
+    HostEvaluate = Provider
+    Exit Function
+    End If
+    End If
+
+j = j + 1
+
+Loop
+
+FINISH:
+
+HostEvaluate = "N/A"
+
+End Function
+
+
+Function OurRegistrar(location, reg)
+
+If reg = "" Then
+OurRegistrar = ""
+Exit Function
+End If
+
+Dim z As String
+Dim j As Integer
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 1).Value) = False
+
+    z = Worksheets("Price Referencing").Cells(j, 1).Value
+    If InStr(1, location, z, vbTextCompare) > 0 And InStr(1, reg, z, vbTextCompare) > 0 Then
+        OurRegistrar = "Y"
+        Exit Function
+    End If
+    j = j + 1
+Loop
+
+OurRegistrar = "N"
+
+End Function
+
+Function OurDNS(Source, Provider)
+
+If Source = "" Then
+OurDNS = ""
+Exit Function
+End If
+
+Dim j As Integer
+
+Dim z As String
+
+j = 2
+z = ""
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 13).Value) = False
+    z = Worksheets("Price Referencing").Cells(j, 13).Value
+        If InStr(1, Source, z, vbTextCompare) > 0 And InStr(1, Provider, z, vbTextCompare) > 0 Then 'complete match
+                OurDNS = "Y"
+                Exit Function
+        End If
+        j = j + 1
+Loop
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 13).Value) = False
+
+    z = Worksheets("Price Referencing").Cells(j, 13).Value
+        If InStr(1, Source, z, vbTextCompare) = 0 And InStr(1, Provider, z, vbTextCompare) > 0 Then
+                OurDNS = "Y"
+                Exit Function
+        End If
+        j = j + 1
+Loop
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 13).Value) = False
+    z = Worksheets("Price Referencing").Cells(j, 13).Value
+        If InStr(1, Source, z, vbTextCompare) > 0 And InStr(1, Provider, z, vbTextCompare) = 0 Then 'match source, not listed provider
+                OurDNS = "N"
+                Exit Function
+        End If
+        j = j + 1
+Loop
+OurDNS = "N"
+
+End Function
+
+Function OurWeb(Source, Provider)
+
+If Source = "" Then
+OurWeb = ""
+Exit Function
+End If
+
+Dim j As Integer
+
+Dim z As String
+
+j = 2
+z = ""
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 25).Value) = False
+    z = Worksheets("Price Referencing").Cells(j, 25).Value
+        If InStr(1, Source, z, vbTextCompare) > 0 And InStr(1, Provider, z, vbTextCompare) > 0 Then 'complete match
+                OurWeb = "Y"
+                Exit Function
+        End If
+        j = j + 1
+Loop
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 25).Value) = False
+
+    z = Worksheets("Price Referencing").Cells(j, 25).Value
+        If InStr(1, Source, z, vbTextCompare) = 0 And InStr(1, Provider, z, vbTextCompare) > 0 Then 'listed provider, not source
+                OurWeb = "Y"
+                Exit Function
+        End If
+        j = j + 1
+Loop
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 25).Value) = False
+    z = Worksheets("Price Referencing").Cells(j, 25).Value
+        If InStr(1, Source, z, vbTextCompare) > 0 And InStr(1, Provider, z, vbTextCompare) = 0 Then 'match source, not listed provider
+                OurWeb = "N"
+                Exit Function
+        End If
+        j = j + 1
+Loop
+OurWeb = "N"
+
+End Function
+
+Function OurMail(Source, Provider)
+
+If Source = "" Then
+OurMail = ""
+Exit Function
+End If
+
+Dim j As Integer
+
+Dim z As String
+
+j = 2
+z = ""
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 31).Value) = False
+    z = Worksheets("Price Referencing").Cells(j, 31).Value
+        If InStr(1, Source, z, vbTextCompare) > 0 And InStr(1, Provider, z, vbTextCompare) > 0 Then 'complete match
+                OurMail = "Y"
+                Exit Function
+        End If
+        j = j + 1
+Loop
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 31).Value) = False
+
+    z = Worksheets("Price Referencing").Cells(j, 31).Value
+        If InStr(1, Source, z, vbTextCompare) = 0 And InStr(1, Provider, z, vbTextCompare) > 0 Then 'listed provider, not source
+                OurMail = "Y"
+                Exit Function
+        End If
+        j = j + 1
+Loop
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 31).Value) = False
+    z = Worksheets("Price Referencing").Cells(j, 31).Value
+        If InStr(1, Source, z, vbTextCompare) > 0 And InStr(1, Provider, z, vbTextCompare) = 0 Then 'match source, not listed provider
+                OurMail = "N"
+                Exit Function
+        End If
+        j = j + 1
+Loop
+        
+   
+'show ("test")
+OurMail = "N"
+
+End Function
+
+Function Pricing(Domain, Host, Ours)
+
+If Domain = "" Then
+Pricing = ""
+Exit Function
+ElseIf Ours = "N" Then
+Pricing = ""
+Exit Function
+End If
+
+Dim j As Integer
+Dim i As Integer
+
+Dim Cost As Single
+ 
+Dim Address As String
+Dim Provider As String
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 4).Value) = False
+    Provider = Worksheets("Price Referencing").Cells(j, 4).Value
+    Address = Worksheets("Price Referencing").Cells(j, 5).Value
+    Cost = Worksheets("Price Referencing").Cells(j, 6).Value
+
+        If InStr(1, Domain, Address, vbTextCompare) > 0 And InStr(1, Host, Provider, vbTextCompare) > 0 And Ours = "Y" Then
+            Pricing = Cost
+            Exit Function
+        End If
+    j = j + 1
+Loop
+
+If InStr(1, Host, Provider, vbTextCompare) > 0 And Ours = "Y" Then
+Pricing = "N/A"
+End If
+
+End Function
+
+Function DNSPrice(Provider, Ours)
+
+If (Ours = "N") Or (Provider = "N/A") Then
+DNSPrice = ""
+Exit Function
+End If
+
+If Ours = "Y" Then GoTo START
+Exit Function
+
+
+START:
+Dim j As Integer
+Dim z As String
+Dim y As String
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 13).Value) = False
+    z = Worksheets("Price Referencing").Cells(j, 13).Value
+    y = Worksheets("Price Referencing").Cells(j, 14).Value
+
+    If InStr(1, Provider, z, vbTextCompare) > 0 Then
+        DNSPrice = y
+        Exit Function
+    End If
+    j = j + 1
+Loop
+DNSPrice = "N/A"
+End Function
+
+Function WebPrice(Provider, Ours)
+
+If (Ours = "N") Or (Provider = "N/A") Then
+WebPrice = ""
+Exit Function
+End If
+
+If Ours = "Y" Then GoTo START
+Exit Function
+
+
+START:
+Dim j As Integer
+Dim z As String
+Dim y As Double
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 25).Value) = False
+    z = Worksheets("Price Referencing").Cells(j, 25).Value
+    y = Worksheets("Price Referencing").Cells(j, 28).Value
+
+    If InStr(1, Provider, z, vbTextCompare) > 0 Then
+        WebPrice = y
+        Exit Function
+    End If
+    j = j + 1
+Loop
+WebPrice = "N/A"
+End Function
+
+Function MailPrice(Provider, Ours)
+
+If (Ours = "N") Or (Provider = "N/A") Then
+MailPrice = ""
+Exit Function
+End If
+
+If Ours = "Y" Then GoTo START
+Exit Function
+
+
+START:
+Dim j As Integer
+Dim z As String
+Dim y As String
+
+j = 2
+
+Do While IsEmpty(Worksheets("Price Referencing").Cells(j, 31).Value) = False
+    z = Worksheets("Price Referencing").Cells(j, 31).Value
+    y = Worksheets("Price Referencing").Cells(j, 32).Value
+
+    If InStr(1, Provider, z, vbTextCompare) > 0 Then
+        MailPrice = y
+        Exit Function
+    End If
+    j = j + 1
+Loop
+MailPrice = "N/A"
+End Function
+
+Private Sub CommandButton1_Click()
+Dim confirm As String
+
+confirm = MsgBox("You are attempting to update all scripts. This may take some time to complete. Are you sure?", vbYesNo + vbQuestion, "WARNING!")
+Trim (confirm)
+
+If confirm = "6" Then
+Application.CalculateFullRebuild
+End If
+
+End Sub
